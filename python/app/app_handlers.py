@@ -682,6 +682,7 @@ def notification_generator(user: User):
                     ),
                     {"yet_send_ride_status_id": yet_sent_ride_status.id},
                 )
+            conn.commit()
 
             if firstConnection:
                 firstConnection = False
