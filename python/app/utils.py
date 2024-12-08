@@ -6,7 +6,7 @@ from .models import Ride
 
 INITIAL_FARE = 500
 FARE_PER_DISTANCE = 100
-MESSAGE_STREAM_DELAY = 0.3
+MESSAGE_STREAM_DELAY = 1
 
 EPOCH = datetime(1970, 1, 1)
 
