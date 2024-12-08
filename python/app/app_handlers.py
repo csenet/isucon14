@@ -690,7 +690,7 @@ async def notification_generator(user: User):
             
 
 @router.get(
-    "/nofitication",
+    "/notification",
     status_code=HTTPStatus.OK,
     response_model_exclude_none=True,
 )
