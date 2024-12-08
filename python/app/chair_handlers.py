@@ -188,8 +188,6 @@ def notification_generator(chair: Chair):
         while True:
             if not firstConnection:
                 time.sleep(MESSAGE_STREAM_DELAY)
-            
-            with engine.begin() as conn:
                 row = conn.execute(
                     text(
                         "SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC LIMIT 1"
