@@ -240,7 +240,11 @@ def app_get_rides(
             if row is None:
                 raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
             owner = Owner.model_validate(row)
-
+            model= conn.execute(
+                    text("SELECT name FROM chair_models WHERE id = :id"), {"id": chair.model_id}
+                ).fetchone()
+            if model is None:
+                raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
             item = GetAppRidesResponseItem(
                 id=decode_ulid(ride.id),
                 pickup_coordinate=Coordinate(
@@ -250,8 +254,9 @@ def app_get_rides(
                     latitude=ride.destination_latitude,
                     longitude=ride.destination_longitude,
                 ),
+                
                 chair=GetAppRidesResponseItemChair(
-                    id=decode_ulid(chair.id), owner=owner.name, name=chair.name, model=chair.model
+                    id=decode_ulid(chair.id), owner=owner.name, name=chair.name, model=model[0]
                 ),
                 fare=fare,
                 evaluation=ride.evaluation,  # type: ignore[arg-type]
@@ -680,9 +685,13 @@ def app_get_notification(
             chair: Chair = Chair.model_validate(row)
 
             stats = get_chair_stats(conn, ride.chair_id)
-
+            model = conn.execute(
+                text("SELECT name FROM chair_models WHERE id = :id"), {"id": chair.model_id}
+            ).fetchone()
+            if model is None:
+                raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
             notification_response.data.chair = AppGetNotificationResponseChair(  # type: ignore[union-attr]
-                id=encode_ulid(chair.id), name=chair.name, model=chair.model, stats=stats
+                id=encode_ulid(chair.id), name=chair.name, models=model[0], stats=stats
             )
 
         if yet_sent_ride_status:
@@ -830,6 +839,9 @@ def app_get_nearby_chairs(
                 model= conn.execute(
                     text("SELECT name FROM chair_models WHERE id = :id"), {"id": chair.model_id}
                 ).fetchone()
+                
+                if model is None:
+                    raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
                 near_by_chairs.append(
                     AppGetNearbyChairsResponseChair(
                         id=encode_ulid(chair.id),
