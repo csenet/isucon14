@@ -186,9 +186,10 @@ async def notification_generator(chair: Chair):
     firstConnection: bool = True
     with engine.begin() as conn:
         while True:
-            # if not firstConnection:
-            await asyncio.sleep(MESSAGE_STREAM_DELAY)
+            if not firstConnection:
+                await asyncio.sleep(MESSAGE_STREAM_DELAY)
             with engine.begin() as conn:
+                print(firstConnection)
                 row = conn.execute(
                     text(
                         "SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC LIMIT 1"
@@ -197,7 +198,7 @@ async def notification_generator(chair: Chair):
                 ).fetchone()
 
                 if row is None:
-                    yield "data: {}\n"
+                    yield "data: null\n"
                     continue
 
                 ride = Ride.model_validate(row)
@@ -211,8 +212,8 @@ async def notification_generator(chair: Chair):
 
                 if row is None:
                     ride_status = get_latest_ride_status(conn, ride.id)
-                    # if not firstConnection:
-                    #     continue
+                    if not firstConnection:
+                        continue
                 else:
                     yet_sent_ride_status = RideStatus.model_validate(row)
                     assert yet_sent_ride_status is not None
@@ -246,15 +247,16 @@ async def notification_generator(chair: Chair):
                 )
                 
                 yield f"data: {response_data.model_dump_json()}\n"
-                # firstConnection = False
+                if firstConnection:
+                    firstConnection = False
 
 @router.get("/notification", response_model_exclude_none=True)
 def chair_get_notification_stream(
     chair: Annotated[Chair, Depends(chair_auth_middleware)],
 ) -> StreamingResponse:
     return StreamingResponse(
-        notification_generator(chair),
-        media_type="text/event-stream",
+        content = notification_generator(chair),
+        media_type = "text/event-stream",
     )
 
 
