@@ -41,7 +41,8 @@ def owner_post_owners(
             detail="some of required fields(name) are empty",
         )
 
-    owner_id = str(ULID())
+    #owner_id = str(ULID())
+    owner_id = ULID().bytes
     access_token = secure_random_str(32)
     chair_register_token = secure_random_str(32)
 
