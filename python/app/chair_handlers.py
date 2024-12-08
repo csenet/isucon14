@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from ulid import ULID
-import asyncio
+import time
 
 from .app_handlers import get_latest_ride_status
 from .middlewares import chair_auth_middleware
@@ -182,12 +182,12 @@ class ChairGetNotificationResponse(BaseModel):
     data: ChairGetNotificationResponseData | None = None
     retry_after_ms: int | None = None
 
-async def notification_generator(chair: Chair):
+def notification_generator(chair: Chair):
     with engine.begin() as conn:
         firstConnection: bool = True
         while True:
             if not firstConnection:
-                await asyncio.sleep(MESSAGE_STREAM_DELAY)
+                time.sleep(MESSAGE_STREAM_DELAY)
             
             with engine.begin() as conn:
                 row = conn.execute(
