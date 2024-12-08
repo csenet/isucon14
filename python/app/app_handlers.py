@@ -606,8 +606,8 @@ async def notification_generator(user: User):
                 {"user_id": user.id},
             ).fetchone()
             if row is None:
-                yield "data: null\n"
-                asyncio.sleep(MESSAGE_STREAM_DELAY)
+                if firstConnection:
+                    yield "data: null\n"
                 continue
                 
             ride: Ride = Ride.model_validate(row)
