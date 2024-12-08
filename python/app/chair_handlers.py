@@ -183,8 +183,8 @@ class ChairGetNotificationResponse(BaseModel):
     retry_after_ms: int | None = None
 
 async def notification_generator(chair: Chair):
+    firstConnection: bool = True
     while True:
-        firstConnection: bool = True
         if not firstConnection:
             await asyncio.sleep(MESSAGE_STREAM_DELAY)
         with engine.begin() as conn:
