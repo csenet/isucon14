@@ -2,15 +2,17 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from ulid import ULID
+import asyncio
 
 from .app_handlers import get_latest_ride_status
 from .middlewares import chair_auth_middleware
 from .models import Chair, ChairLocation, Owner, Ride, RideStatus, User
 from .sql import engine
-from .utils import secure_random_str, timestamp_millis
+from .utils import secure_random_str, timestamp_millis, MESSAGE_STREAM_DELAY
 
 router = APIRouter(prefix="/api/chair")
 
@@ -180,67 +182,65 @@ class ChairGetNotificationResponse(BaseModel):
     data: ChairGetNotificationResponseData | None = None
     retry_after_ms: int | None = None
 
+async def notification_generator(chair: Chair):
+    while True:
+        firstConnection: bool = True
+        if not firstConnection:
+            await asyncio.sleep(MESSAGE_STREAM_DELAY)
+        with engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC LIMIT 1"
+                ),
+                {"chair_id": chair.id},
+            ).fetchone()
+
+            if row is None:
+                yield "data: {}\n\n"
+                continue
+
+            ride = Ride.model_validate(row)
+            yet_sent_ride_status: RideStatus | None = None
+            row = conn.execute(
+                text(
+                    "SELECT * FROM ride_statuses WHERE ride_id = :ride_id AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1"
+                ),
+                {"ride_id": ride.id},
+            ).fetchone()
+
+            if row is None:
+                ride_status = get_latest_ride_status(conn, ride.id)
+                if not firstConnection:
+                    continue
+            else:
+                yet_sent_ride_status = RideStatus.model_validate(row)
+                assert yet_sent_ride_status is not None
+                ride_status = yet_sent_ride_status.status
+
+            row = conn.execute(
+                text("SELECT * FROM users WHERE id = :id FOR SHARE"), {"id": ride.user_id}
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+            user = User.model_validate(row)
+
+            if yet_sent_ride_status:
+                conn.execute(
+                    text(
+                        "UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = :id"
+                    ),
+                    {"id": yet_sent_ride_status.id},
+                )
+
+        yield f"data: {ChairGetNotificationResponseData(ride_id=ride.id, user=SimpleUser(id=user.id, name=f'{user.firstname} {user.lastname}'), pickup_coordinate=Coordinate(latitude=ride.pickup_latitude, longitude=ride.pickup_longitude), destination_coordinate=Coordinate(latitude=ride.destination_latitude, longitude=ride.destination_longitude), status=ride_status)}\n"
 
 @router.get("/notification", response_model_exclude_none=True)
-def chair_get_notification(
+def chair_get_notification_stream(
     chair: Annotated[Chair, Depends(chair_auth_middleware)],
-) -> ChairGetNotificationResponse:
-    with engine.begin() as conn:
-        ride_status = ""
-        row = conn.execute(
-            text(
-                "SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC LIMIT 1"
-            ),
-            {"chair_id": chair.id},
-        ).fetchone()
-
-        if row is None:
-            return ChairGetNotificationResponse(data=None, retry_after_ms=30)
-
-        ride = Ride.model_validate(row)
-        yet_sent_ride_status: RideStatus | None = None
-        row = conn.execute(
-            text(
-                "SELECT * FROM ride_statuses WHERE ride_id = :ride_id AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1"
-            ),
-            {"ride_id": ride.id},
-        ).fetchone()
-
-        if row is None:
-            ride_status = get_latest_ride_status(conn, ride.id)
-        else:
-            yet_sent_ride_status = RideStatus.model_validate(row)
-            assert yet_sent_ride_status is not None
-            ride_status = yet_sent_ride_status.status
-
-        row = conn.execute(
-            text("SELECT * FROM users WHERE id = :id FOR SHARE"), {"id": ride.user_id}
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-        user = User.model_validate(row)
-
-        if yet_sent_ride_status:
-            conn.execute(
-                text(
-                    "UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = :id"
-                ),
-                {"id": yet_sent_ride_status.id},
-            )
-
-    return ChairGetNotificationResponse(
-        data=ChairGetNotificationResponseData(
-            ride_id=ride.id,
-            user=SimpleUser(id=user.id, name=f"{user.firstname} {user.lastname}"),
-            pickup_coordinate=Coordinate(
-                latitude=ride.pickup_latitude, longitude=ride.pickup_longitude
-            ),
-            destination_coordinate=Coordinate(
-                latitude=ride.destination_latitude, longitude=ride.destination_longitude
-            ),
-            status=ride_status,
-        ),
-        retry_after_ms=30,
+) -> StreamingResponse:
+    return StreamingResponse(
+        notification_generator(chair),
+        media_type="text/event-stream",
     )
 
 
