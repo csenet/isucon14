@@ -596,7 +596,7 @@ async def notification_generator(user: User):
         firstConnection: bool = True
         while True:
             if not firstConnection:
-                asyncio.sleep(MESSAGE_STREAM_DELAY)
+                await asyncio.sleep(MESSAGE_STREAM_DELAY)
             
             # Userが乗車しているRideを取得
             row = conn.execute(
