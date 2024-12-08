@@ -592,9 +592,9 @@ class AppGetNotificationResponse(BaseModel):
     retry_after_ms: int | None = None
 
 def notification_generator(user: User):
-    with engine.begin() as conn:
-        firstConnection: bool = True
-        while True:
+    firstConnection: bool = True
+    while True:
+        with engine.begin() as conn:
             if not firstConnection:
                 time.sleep(MESSAGE_STREAM_DELAY)
             
@@ -687,7 +687,7 @@ def notification_generator(user: User):
                 firstConnection = False
             
             yield f"data: {notification_response.model_dump_json()}\n\n"
-            
+        
 
 @router.get(
     "/notification",
