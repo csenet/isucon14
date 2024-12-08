@@ -606,7 +606,7 @@ async def notification_generator(user: User):
                 {"user_id": user.id},
             ).fetchone()
             if row is None:
-                yield "data: {}\n"
+                yield "data: null\n\n"
                 asyncio.sleep(MESSAGE_STREAM_DELAY)
                 continue
                 
@@ -686,7 +686,7 @@ async def notification_generator(user: User):
             if firstConnection:
                 firstConnection = False
             
-            yield f"data: {notification_response}\n"
+            yield f"data: {notification_response.model_dump_json()}\n\n"
             
 
 @router.get(
