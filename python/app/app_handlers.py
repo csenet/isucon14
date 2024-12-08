@@ -607,7 +607,7 @@ def notification_generator(user: User):
             ).fetchone()
             if row is None:
                 if firstConnection:
-                    yield "data: null\n"
+                    yield "data: null\n\n"
                 continue
                 
             ride: Ride = Ride.model_validate(row)
@@ -686,7 +686,7 @@ def notification_generator(user: User):
             if firstConnection:
                 firstConnection = False
             
-            yield f"data: {notification_response.model_dump_json()}\n"
+            yield f"data: {notification_response.model_dump_json()}\n\n"
             
 
 @router.get(
