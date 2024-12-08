@@ -2,10 +2,12 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from ulid import ULID
+import asyncio
 
 from .middlewares import app_auth_middleware
 from .models import (
@@ -26,6 +28,7 @@ from .sql import engine
 from .utils import (
     FARE_PER_DISTANCE,
     INITIAL_FARE,
+    MESSAGE_STREAM_DELAY,
     calculate_distance,
     calculate_fare,
     secure_random_str,
@@ -588,96 +591,113 @@ class AppGetNotificationResponse(BaseModel):
     data: AppGetNotificationResponseData | None = None
     retry_after_ms: int | None = None
 
+async def notification_generator(user: User):
+    with engine.begin() as conn:
+        firstConnection: bool = True
+        while True:
+            if not firstConnection:
+                asyncio.sleep(MESSAGE_STREAM_DELAY)
+            
+            # Userが乗車しているRideを取得
+            row = conn.execute(
+                text(
+                    "SELECT * FROM rides WHERE user_id = :user_id ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"user_id": user.id},
+            ).fetchone()
+            if row is None:
+                yield "data: {}\n"
+                asyncio.sleep(MESSAGE_STREAM_DELAY)
+                continue
+                
+            ride: Ride = Ride.model_validate(row)
+            
+            # 未送信のRideStatusを取得
+            row = conn.execute(
+                text(
+                    "SELECT * FROM ride_statuses WHERE ride_id = :ride_id AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1"
+                ),
+                {"ride_id": ride.id},
+            ).fetchone()
+            yet_sent_ride_status: RideStatus | None = None
+            if row is None:
+                # 未送信のRideStatusがない場合
+                
+                # 更新がない場合はスキップする
+                # ただし、初回の接続の場合はスキップしない
+                if not firstConnection:
+                    continue
+                status = get_latest_ride_status(conn, ride.id)
+            else:
+                # 未送信のRideStatusがある場合はそのRideStatusを取得
+                yet_sent_ride_status = RideStatus.model_validate(row)
+                status = yet_sent_ride_status.status
+            
+            fare = calculate_discounted_fare(
+                        conn,
+                        user.id,
+                        ride,
+                        ride.pickup_latitude,
+                        ride.pickup_longitude,
+                        ride.destination_latitude,
+                        ride.destination_longitude,
+                    )
+
+            notification_response = AppGetNotificationResponseData(
+                    ride_id=ride.id,
+                    pickup_coordinate=Coordinate(
+                        latitude=ride.pickup_latitude, longitude=ride.pickup_longitude
+                    ),
+                    destination_coordinate=Coordinate(
+                        latitude=ride.destination_latitude,
+                        longitude=ride.destination_longitude,
+                    ),
+                    fare=fare,
+                    status=status,
+                    chair=None,
+                    created_at=timestamp_millis(ride.created_at),
+                    updated_at=timestamp_millis(ride.updated_at),
+                )
+
+            if ride.chair_id:
+                row = conn.execute(
+                    text("SELECT * FROM chairs WHERE id = :chair_id"),
+                    {"chair_id": ride.chair_id},
+                ).fetchone()
+                if row is None:
+                    raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+                chair: Chair = Chair.model_validate(row)
+
+                stats = get_chair_stats(conn, ride.chair_id)
+
+                notification_response.chair = AppGetNotificationResponseChair(  # type: ignore[union-attr]
+                    id=chair.id, name=chair.name, model=chair.model, stats=stats
+                )
+
+            if yet_sent_ride_status:
+                conn.execute(
+                    text(
+                        "UPDATE ride_statuses SET app_sent_at = CURRENT_TIMESTAMP(6) WHERE id = :yet_send_ride_status_id"
+                    ),
+                    {"yet_send_ride_status_id": yet_sent_ride_status.id},
+                )
+
+            if firstConnection:
+                firstConnection = False
+            
+            yield f"data: {notification_response}\n"
+            
 
 @router.get(
-    "/notification",
+    "/nofitication",
     status_code=HTTPStatus.OK,
     response_model_exclude_none=True,
 )
-def app_get_notification(
+def app_get_notification_stream(
     user: Annotated[User, Depends(app_auth_middleware)],
-) -> AppGetNotificationResponse:
-    with engine.begin() as conn:
-        row = conn.execute(
-            text(
-                "SELECT * FROM rides WHERE user_id = :user_id ORDER BY created_at DESC LIMIT 1"
-            ),
-            {"user_id": user.id},
-        ).fetchone()
-        if row is None:
-            notification_response = AppGetNotificationResponse(retry_after_ms=30)
-            return notification_response
-
-        ride: Ride = Ride.model_validate(row)
-
-        row = conn.execute(
-            text(
-                "SELECT * FROM ride_statuses WHERE ride_id = :ride_id AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1"
-            ),
-            {"ride_id": ride.id},
-        ).fetchone()
-        yet_sent_ride_status: RideStatus | None = None
-        if row is None:
-            status = get_latest_ride_status(conn, ride.id)
-        else:
-            yet_sent_ride_status = RideStatus.model_validate(row)
-            status = yet_sent_ride_status.status
-
-        fare = calculate_discounted_fare(
-            conn,
-            user.id,
-            ride,
-            ride.pickup_latitude,
-            ride.pickup_longitude,
-            ride.destination_latitude,
-            ride.destination_longitude,
-        )
-
-        notification_response = AppGetNotificationResponse(
-            data=AppGetNotificationResponseData(
-                ride_id=ride.id,
-                pickup_coordinate=Coordinate(
-                    latitude=ride.pickup_latitude, longitude=ride.pickup_longitude
-                ),
-                destination_coordinate=Coordinate(
-                    latitude=ride.destination_latitude,
-                    longitude=ride.destination_longitude,
-                ),
-                fare=fare,
-                status=status,
-                chair=None,
-                created_at=timestamp_millis(ride.created_at),
-                updated_at=timestamp_millis(ride.updated_at),
-            ),
-            retry_after_ms=30,
-        )
-
-        if ride.chair_id:
-            row = conn.execute(
-                text("SELECT * FROM chairs WHERE id = :chair_id"),
-                {"chair_id": ride.chair_id},
-            ).fetchone()
-            if row is None:
-                raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-
-            chair: Chair = Chair.model_validate(row)
-
-            stats = get_chair_stats(conn, ride.chair_id)
-
-            notification_response.data.chair = AppGetNotificationResponseChair(  # type: ignore[union-attr]
-                id=chair.id, name=chair.name, model=chair.model, stats=stats
-            )
-
-        if yet_sent_ride_status:
-            conn.execute(
-                text(
-                    "UPDATE ride_statuses SET app_sent_at = CURRENT_TIMESTAMP(6) WHERE id = :yet_send_ride_status_id"
-                ),
-                {"yet_send_ride_status_id": yet_sent_ride_status.id},
-            )
-
-    return notification_response
-
+) -> StreamingResponse:
+    return StreamingResponse(notification_generator(user), media_type="text/event-stream")
 
 class RecentRide(BaseModel):
     id: str
