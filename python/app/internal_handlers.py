@@ -39,7 +39,14 @@ def internal_get_matching() -> None:
                     )
                 ).fetchall()
         if not chairs_rows:
-            return
+            chairs_rows = conn.execute(
+              text(
+                  "SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1"
+              )
+            ).fetchone()
+             
+            if not chairs_rows:
+                return
         
         alpha = 3
         closest_and_fastest:Chair = None
