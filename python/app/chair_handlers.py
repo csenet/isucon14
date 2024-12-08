@@ -50,7 +50,8 @@ def chair_post_chairs(
             )
         owner = Owner.model_validate(row)
 
-    chair_id = str(ULID())
+    #chair_id = str(ULID())
+    chair_id = ULID().bytes
     access_token = secure_random_str(32)
 
     with engine.begin() as conn:
@@ -103,7 +104,8 @@ def chair_post_coordinate(
     req: Coordinate,
 ) -> ChairPostCoordinateResponse:
     with engine.begin() as conn:
-        chair_location_id = str(ULID())
+        #chair_location_id = str(ULID())
+        chair_location_id = ULID().bytes
         conn.execute(
             text(
                 "INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (:id, :chair_id, :latitude, :longitude)"
@@ -143,7 +145,8 @@ def chair_post_coordinate(
                         text(
                             "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
                         ),
-                        {"id": str(ULID()), "ride_id": ride.id, "status": "PICKUP"},
+                        #{"id": str(ULID()), "ride_id": ride.id, "status": "PICKUP"},
+                        {"id": ULID().bytes, "ride_id": ride.id, "status": "PICKUP"},
                     )
 
                 if (
@@ -155,7 +158,8 @@ def chair_post_coordinate(
                         text(
                             "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status) "
                         ),
-                        {"id": str(ULID()), "ride_id": ride.id, "status": "ARRIVED"},
+                        #{"id": str(ULID()), "ride_id": ride.id, "status": "ARRIVED"},
+                        {"id": ULID().bytes, "ride_id": ride.id, "status": "ARRIVED"},
                     )
 
     return ChairPostCoordinateResponse(
@@ -276,7 +280,8 @@ def chair_post_ride_status(
                     text(
                         "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
                     ),
-                    {"id": str(ULID()), "ride_id": ride.id, "status": "ENROUTE"},
+                    #{"id": str(ULID()), "ride_id": ride.id, "status": "ENROUTE"},
+                    {"id": ULID().bytes, "ride_id": ride.id, "status": "ENROUTE"},
                 )
             # After Picking up user
             case "CARRYING":
@@ -290,7 +295,8 @@ def chair_post_ride_status(
                     text(
                         "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
                     ),
-                    {"id": str(ULID()), "ride_id": ride.id, "status": "CARRYING"},
+                    #{"id": str(ULID()), "ride_id": ride.id, "status": "CARRYING"},
+                    {"id": ULID().bytes, "ride_id": ride.id, "status": "CARRYING"},
                 )
             case _:
                 raise HTTPException(

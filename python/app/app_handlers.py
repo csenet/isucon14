@@ -52,7 +52,8 @@ class AppPostUsersResponse(BaseModel):
 def app_post_users(
     req: AppPostUsersRequest, response: Response
 ) -> AppPostUsersResponse:
-    user_id = str(ULID())
+    #user_id = str(ULID())
+    user_id = ULID().bytes
     access_token = secure_random_str(32)
     invitation_code = secure_random_str(15)
 
@@ -287,7 +288,8 @@ def app_post_rides(
             detail="required fields(pickup_coordinate, destination_coordinate) are empty",
         )
 
-    ride_id = str(ULID())
+    #ride_id = str(ULID())
+    ride_id = ULID().bytes
     with engine.begin() as conn:
         rows = conn.execute(
             text("SELECT * FROM rides WHERE user_id = :user_id"), {"user_id": user.id}
@@ -323,7 +325,8 @@ def app_post_rides(
             text(
                 "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
             ),
-            {"id": str(ULID()), "ride_id": ride_id, "status": "MATCHING"},
+            #{"id": str(ULID()), "ride_id": ride_id, "status": "MATCHING"},
+            {"id": ULID().bytes, "ride_id": ride_id, "status": "MATCHING"},
         )
 
         ride_count = conn.execute(
@@ -496,7 +499,8 @@ def app_post_ride_evaluation(
             text(
                 "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
             ),
-            {"id": str(ULID()), "ride_id": ride_id, "status": "COMPLETED"},
+            #{"id": str(ULID()), "ride_id": ride_id, "status": "COMPLETED"},
+            {"id": ULID().bytes, "ride_id": ride_id, "status": "COMPLETED"},
         )
 
         row = conn.execute(
