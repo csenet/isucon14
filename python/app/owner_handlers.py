@@ -173,50 +173,79 @@ def owner_get_chairs(
     owner: Annotated[Owner, Depends(owner_auth_middleware)],
 ) -> OwnerGetChairResponse:
     with engine.begin() as conn:
-        rows = conn.execute(
+        # 1. chairsテーブルのみをクエリして基本情報を取得
+        chair_rows = conn.execute(
             text(
                 """
-                SELECT id,
-                       owner_id,
-                       name,
-                       access_token,
-                       model,
-                       is_active,
-                       created_at,
-                       updated_at,
-                       IFNULL(total_distance, 0) AS total_distance,
-                       total_distance_updated_at
+                SELECT id, owner_id, name, access_token, model, is_active, created_at, updated_at
                 FROM chairs
-                       LEFT JOIN (SELECT chair_id,
-                                          SUM(IFNULL(distance, 0)) AS total_distance,
-                                          MAX(created_at)          AS total_distance_updated_at
-                                   FROM (SELECT chair_id,
-                                                created_at,
-                                                ABS(latitude - LAG(latitude) OVER (PARTITION BY chair_id ORDER BY created_at)) +
-                                                ABS(longitude - LAG(longitude) OVER (PARTITION BY chair_id ORDER BY created_at)) AS distance
-                                         FROM chair_locations) tmp
-                                   GROUP BY chair_id) distance_table ON distance_table.chair_id = chairs.id
                 WHERE owner_id = :owner_id
-        """
+                """
             ),
             {"owner_id": owner.id},
         )
-        chairs = [ChairWithDetail.model_validate(r) for r in rows.mappings()]
 
-    res = OwnerGetChairResponse(chairs=[])
-    for chair in chairs:
-        c = OwnerGetChairResponseChair(
-            id=chair.id,
-            name=chair.name,
-            model=chair.model,
-            active=chair.is_active,
-            registered_at=timestamp_millis(chair.created_at),
-            total_distance=chair.total_distance,
-            total_distance_updated_at=None,
+        chairs = [ChairWithDetail.model_validate(r) for r in chair_rows.mappings()]
+        chair_ids = [c.id for c in chairs]
+        
+        if not chair_ids:
+            # 該当チェアがなければそのまま返す
+            return OwnerGetChairResponse(chairs=[])
+
+        # 2. chair_locationsテーブルから関連する全チェアのロケーションを取得
+        #   ここでは距離計算は行わず、生データを受け取り、後でPython側で計算
+        location_rows = conn.execute(
+            text(
+                """
+                SELECT chair_id, created_at, latitude, longitude
+                FROM chair_locations
+                WHERE chair_id IN :chair_ids
+                ORDER BY chair_id, created_at
+                """
+            ),
+            {"chair_ids": tuple(chair_ids)},
         )
-        if chair.total_distance_updated_at is not None:
-            t = timestamp_millis(chair.total_distance_updated_at)
-            c.total_distance_updated_at = t
-        res.chairs.append(c)
+
+        # 3. Python側でchair_idごとに距離計算
+        locations_by_chair = {}
+        for loc in location_rows.mappings():
+            cid = loc["chair_id"]
+            if cid not in locations_by_chair:
+                locations_by_chair[cid] = []
+            locations_by_chair[cid].append(loc)
+        
+        # 距離計算関数（例：単純な差分合計）
+        def calc_total_distance_and_last_updated(locs):
+            if not locs:
+                return 0, None
+            total_distance = 0
+            last_updated = None
+            prev_lat = None
+            prev_lng = None
+            for l in locs:
+                if prev_lat is not None and prev_lng is not None:
+                    dist = abs(l["latitude"] - prev_lat) + abs(l["longitude"] - prev_lng)
+                    total_distance += dist
+                prev_lat = l["latitude"]
+                prev_lng = l["longitude"]
+                last_updated = l["created_at"]
+            return total_distance, last_updated
+
+        # 4. chairsと計算結果をマージしてレスポンスを組み立て
+        res = OwnerGetChairResponse(chairs=[])
+        for chair in chairs:
+            locs = locations_by_chair.get(chair.id, [])
+            total_dist, last_update = calc_total_distance_and_last_updated(locs)
+            
+            c = OwnerGetChairResponseChair(
+                id=chair.id,
+                name=chair.name,
+                model=chair.model,
+                active=chair.is_active,
+                registered_at=timestamp_millis(chair.created_at),
+                total_distance=total_dist,
+                total_distance_updated_at=timestamp_millis(last_update) if last_update else None,
+            )
+            res.chairs.append(c)
 
     return res
