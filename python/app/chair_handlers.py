@@ -198,7 +198,7 @@ async def notification_generator(chair: Chair):
                 ).fetchone()
 
                 if row is None:
-                    yield "data: null\n"
+                    yield "data: null\n\n"
                     continue
 
                 ride = Ride.model_validate(row)
@@ -246,7 +246,7 @@ async def notification_generator(chair: Chair):
                     status=ride_status,
                 )
                 
-                yield f"data: {response_data.model_dump_json()}\n"
+                yield f"data: {response_data.model_dump_json()}\n\n"
                 if firstConnection:
                     firstConnection = False
 
