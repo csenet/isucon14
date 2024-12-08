@@ -248,51 +248,80 @@ class PostChairRidesRideIDStatusRequest(BaseModel):
     status: str
 
 
+def get_latest_ride_status(conn, ride_id: str) -> str | None:
+    row = conn.execute(
+        text(
+            "SELECT status FROM ride_statuses WHERE ride_id = :ride_id "
+            "ORDER BY created_at DESC LIMIT 1 FOR UPDATE"
+        ),
+        {"ride_id": ride_id},
+    ).fetchone()
+    return row.status if row else None
+
 @router.post("/rides/{ride_id}/status", status_code=HTTPStatus.NO_CONTENT)
 def chair_post_ride_status(
     chair: Annotated[Chair, Depends(chair_auth_middleware)],
     ride_id: str,
     req: PostChairRidesRideIDStatusRequest,
 ) -> None:
-    with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT * FROM rides WHERE id = :id FOR UPDATE"), {"id": ride_id}
-        ).fetchone()
-        if row is None:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND, detail="ride not found"
-            )
-        ride = Ride.model_validate(row)
-
-        if ride.chair_id != chair.id:
-            raise HTTPException(
-                status_code=HTTPStatus.BAD_REQUEST, detail="not assigned to this ride"
-            )
-
-        match req.status:
-            # Acknowledge the ride
-            case "ENROUTE":
-                conn.execute(
-                    text(
-                        "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
-                    ),
-                    {"id": str(ULID()), "ride_id": ride.id, "status": "ENROUTE"},
-                )
-            # After Picking up user
-            case "CARRYING":
-                ride_status = get_latest_ride_status(conn, ride.id)
-                if ride_status != "PICKUP":
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with engine.begin() as conn:
+                # 乗車情報をロック付きで取得
+                row = conn.execute(
+                    text("SELECT * FROM rides WHERE id = :id FOR UPDATE"),
+                    {"id": ride_id},
+                ).fetchone()
+                if row is None:
                     raise HTTPException(
-                        status_code=HTTPStatus.BAD_REQUEST,
-                        detail="chair has not arrived yet",
+                        status_code=HTTPStatus.NOT_FOUND, detail="ride not found"
                     )
-                conn.execute(
-                    text(
-                        "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
-                    ),
-                    {"id": str(ULID()), "ride_id": ride.id, "status": "CARRYING"},
-                )
-            case _:
+
+                ride = Ride.model_validate(row)
+                if ride.chair_id != chair.id:
+                    raise HTTPException(
+                        status_code=HTTPStatus.BAD_REQUEST, detail="not assigned to this ride"
+                    )
+
+                match req.status:
+                    case "ENROUTE":
+                        conn.execute(
+                            text(
+                                "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
+                            ),
+                            {"id": str(ULID()), "ride_id": ride.id, "status": "ENROUTE"},
+                        )
+
+                    case "CARRYING":
+                        # 最新ステータスをロック付きで取得
+                        ride_status = get_latest_ride_status(conn, ride.id)
+                        if ride_status != "PICKUP":
+                            raise HTTPException(
+                                status_code=HTTPStatus.BAD_REQUEST,
+                                detail="chair has not arrived yet",
+                            )
+                        conn.execute(
+                            text(
+                                "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
+                            ),
+                            {"id": str(ULID()), "ride_id": ride.id, "status": "CARRYING"},
+                        )
+
+                    case _:
+                        raise HTTPException(
+                            status_code=HTTPStatus.BAD_REQUEST, detail="invalid status"
+                        )
+            # 正常完了
+            break
+
+        except OperationalError:
+            # デッドロックなどの一時的障害発生時にリトライ
+            if attempt < max_retries - 1:
+                time.sleep(0.2)
+                continue
+            else:
                 raise HTTPException(
-                    status_code=HTTPStatus.BAD_REQUEST, detail="invalid status"
+                    status_code=HTTPStatus.BAD_REQUEST, 
+                    detail="Could not process request due to concurrency issues"
                 )
