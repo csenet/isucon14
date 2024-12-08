@@ -136,7 +136,7 @@ class Coupon(BaseModel):
     discount: int
     created_at: datetime
     used_by: str | None
-    @field_validator('id', 'user_id', mode='before')
+    @field_validator( 'user_id', mode='before')
     def convert_str_to_bytes(cls, v):
         if isinstance(v, str):
             return decode_ulid(v)
