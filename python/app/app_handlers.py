@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from ulid import ULID
-import asyncio
+import time
 
 from .middlewares import app_auth_middleware
 from .models import (
@@ -591,12 +591,12 @@ class AppGetNotificationResponse(BaseModel):
     data: AppGetNotificationResponseData | None = None
     retry_after_ms: int | None = None
 
-async def notification_generator(user: User):
+def notification_generator(user: User):
     with engine.begin() as conn:
         firstConnection: bool = True
         while True:
             if not firstConnection:
-                await asyncio.sleep(MESSAGE_STREAM_DELAY)
+                time.sleep(MESSAGE_STREAM_DELAY)
             
             # Userが乗車しているRideを取得
             row = conn.execute(
