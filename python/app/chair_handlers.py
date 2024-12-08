@@ -196,7 +196,7 @@ async def notification_generator(chair: Chair):
             ).fetchone()
 
             if row is None:
-                yield "data: {}\n\n"
+                yield "data: {}\n"
                 continue
 
             ride = Ride.model_validate(row)
@@ -231,9 +231,8 @@ async def notification_generator(chair: Chair):
                     ),
                     {"id": yet_sent_ride_status.id},
                 )
-
-        yield f"data: {ChairGetNotificationResponseData(ride_id=ride.id, user=SimpleUser(id=user.id, name=f'{user.firstname} {user.lastname}'), pickup_coordinate=Coordinate(latitude=ride.pickup_latitude, longitude=ride.pickup_longitude), destination_coordinate=Coordinate(latitude=ride.destination_latitude, longitude=ride.destination_longitude), status=ride_status)}\n"
-        firstConnection = False
+            yield f"data: {ChairGetNotificationResponseData(ride_id=ride.id, user=SimpleUser(id=user.id, name=f'{user.firstname} {user.lastname}'), pickup_coordinate=Coordinate(latitude=ride.pickup_latitude, longitude=ride.pickup_longitude), destination_coordinate=Coordinate(latitude=ride.destination_latitude, longitude=ride.destination_longitude), status=ride_status)}\n"
+            firstConnection = False
 
 @router.get("/notification", response_model_exclude_none=True)
 def chair_get_notification_stream(
