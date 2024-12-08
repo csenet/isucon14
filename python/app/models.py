@@ -81,12 +81,11 @@ class PaymentToken(BaseModel):
     user_id: bytes
     token: str
     created_at: datetime
-    @field_validator('id', 'owner_id', mode='before')
+    @field_validator('user_id', mode='before')
     def convert_str_to_bytes(cls, v):
         if isinstance(v, str):
             return decode_ulid(v)
         return v
-
 
 class Ride(BaseModel):
     id: bytes
