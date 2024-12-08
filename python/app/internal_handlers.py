@@ -48,7 +48,7 @@ def internal_get_matching() -> None:
             if not chairs_rows:
                 return
         
-        alpha = 0.5
+        alpha = 2
         closest_and_fastest:Chair = None
         best_score = float('-inf')
 
