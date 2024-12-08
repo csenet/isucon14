@@ -35,6 +35,7 @@ CREATE TABLE chairs
   PRIMARY KEY (id)
 )
   COMMENT = '椅子情報テーブル';
+ALTER TABLE chairs ADD INDEX idx_chairs_owner_id (owner_id);
 
 DROP TABLE IF EXISTS chair_locations;
 CREATE TABLE chair_locations
@@ -47,6 +48,10 @@ CREATE TABLE chair_locations
   PRIMARY KEY (id)
 )
   COMMENT = '椅子の現在位置情報テーブル';
+ALTER TABLE chair_locations ADD INDEX idx_chair_id (chair_id);
+ALTER TABLE chair_locations ADD INDEX idx_latituede (latituede);
+ALTER TABLE chair_locations ADD INDEX idx_longitude (longitude);
+
 
 DROP TABLE IF EXISTS users;
 CREATE TABLE users
@@ -66,6 +71,7 @@ CREATE TABLE users
   UNIQUE (invitation_code)
 )
   COMMENT = '利用者情報テーブル';
+ALTER TABLE users ADD INDEX idx_invitation_code (invitation_code);
 
 DROP TABLE IF EXISTS payment_tokens;
 CREATE TABLE payment_tokens
@@ -76,6 +82,7 @@ CREATE TABLE payment_tokens
   PRIMARY KEY (user_id)
 )
   COMMENT = '決済トークンテーブル';
+ALTER TABLE payment_tokens ADD INDEX idx_token (token);
 
 DROP TABLE IF EXISTS rides;
 CREATE TABLE rides
@@ -93,6 +100,8 @@ CREATE TABLE rides
   PRIMARY KEY (id)
 )
   COMMENT = 'ライド情報テーブル';
+ALTER TABLE rides ADD INDEX idx_user_id (user_id);
+ALTER TABLE rides ADD INDEX idx_chair_id (chair_id);
 
 DROP TABLE IF EXISTS ride_statuses;
 CREATE TABLE ride_statuses
@@ -106,6 +115,8 @@ CREATE TABLE ride_statuses
   PRIMARY KEY (id)
 )
   COMMENT = 'ライドステータスの変更履歴テーブル';
+ALTER TABLE ride_statuses ADD INDEX idx_ride_id (ride_id);
+
 
 DROP TABLE IF EXISTS owners;
 CREATE TABLE owners
@@ -122,6 +133,7 @@ CREATE TABLE owners
   UNIQUE (chair_register_token)
 )
   COMMENT = '椅子のオーナー情報テーブル';
+ALTER TABLE owners ADD INDEX idx_chair_register_token (chair_register_token);
 
 DROP TABLE IF EXISTS coupons;
 CREATE TABLE coupons
@@ -134,3 +146,5 @@ CREATE TABLE coupons
   PRIMARY KEY (user_id, code)
 )
   COMMENT 'クーポンテーブル';
+ALTER TABLE coupons ADD INDEX idx_code (code);
+ALTER TABLE coupons ADD INDEX idx_used_by (used_by);
