@@ -183,12 +183,12 @@ class ChairGetNotificationResponse(BaseModel):
     retry_after_ms: int | None = None
 
 async def notification_generator(chair: Chair):
-    yield "retry: 10000\n\n"
-    firstConnection: bool = True
     with engine.begin() as conn:
+        firstConnection: bool = True
         while True:
             if not firstConnection:
                 await asyncio.sleep(MESSAGE_STREAM_DELAY)
+            
             with engine.begin() as conn:
                 row = conn.execute(
                     text(
@@ -250,8 +250,12 @@ async def notification_generator(chair: Chair):
                 if firstConnection:
                     firstConnection = False
 
-@router.get("/notification", response_model_exclude_none=True)
-def chair_get_notification_stream(
+@router.get(
+    "/notification", 
+    status_code=HTTPStatus.OK,
+    response_model_exclude_none=True
+)
+async def chair_get_notification_stream(
     chair: Annotated[Chair, Depends(chair_auth_middleware)],
 ) -> StreamingResponse:
     return StreamingResponse(
