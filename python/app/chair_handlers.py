@@ -183,13 +183,13 @@ class ChairGetNotificationResponse(BaseModel):
     retry_after_ms: int | None = None
 
 async def notification_generator(chair: Chair):
+    yield "retry: 10000\n\n"
     firstConnection: bool = True
     with engine.begin() as conn:
         while True:
             if not firstConnection:
                 await asyncio.sleep(MESSAGE_STREAM_DELAY)
             with engine.begin() as conn:
-                print(firstConnection)
                 row = conn.execute(
                     text(
                         "SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC LIMIT 1"
