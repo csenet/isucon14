@@ -691,45 +691,34 @@ class RecentRide(BaseModel):
 def get_chair_stats(
     conn: Connection, chair_id: str
 ) -> AppGetNotificationResponseChairStats:
-    rides = conn.execute(
-        text("SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC"),
+    ride_statuses = conn.execute(
+        text(
+            "SELECT r.id, r.evaluation, rs.status FROM rides r "
+            "JOIN ride_statuses rs ON r.id = rs.ride_id "
+            "WHERE r.chair_id = :chair_id "
+            "ORDER BY rs.created_at"
+        ),
         {"chair_id": chair_id},
     ).fetchall()
+
     total_ride_count = 0
     total_evaluation = 0.0
+    ride_status_map = {}
 
-    for ride in rides:
-        rows = conn.execute(
-            text(
-                "SELECT * FROM ride_statuses WHERE ride_id = :ride_id ORDER BY created_at"
-            ),
-            {"ride_id": ride.id},
-        )
-        ride_statuses = [RideStatus.model_validate(row) for row in rows]
+    for ride_status in ride_statuses:
+        ride_id = ride_status.id
+        if ride_id not in ride_status_map:
+            ride_status_map[ride_id] = set()
+        ride_status_map[ride_id].add(ride_status.status)
 
-        arrived_at = None
-        pickuped_at = None
-        is_completed = None
-        for status in ride_statuses:
-            if status.status == "ARRIVED":
-                arrived_at = status.created_at
-            elif status.status == "CARRYING":
-                pickuped_at = status.created_at
-            if status.status == "COMPLETED":
-                is_completed = True
+    for ride_id, statuses in ride_status_map.items():
+        if "ARRIVED" in statuses and "CARRYING" in statuses and "COMPLETED" in statuses:
+            total_ride_count += 1
+            total_evaluation += float(
+                next(ride.evaluation for ride in ride_statuses if ride.id == ride_id)
+            )
 
-        if (arrived_at is None) or (pickuped_at is None):
-            continue
-        if not is_completed:
-            continue
-
-        total_ride_count += 1
-        total_evaluation += float(ride.evaluation)
-
-    if total_ride_count > 0:
-        total_evaluation_avg = total_evaluation / total_ride_count
-    else:
-        total_evaluation_avg = 0.0
+    total_evaluation_avg = total_evaluation / total_ride_count if total_ride_count > 0 else 0.0
 
     return AppGetNotificationResponseChairStats(
         total_rides_count=total_ride_count, total_evaluation_avg=total_evaluation_avg
