@@ -827,11 +827,14 @@ def app_get_nearby_chairs(
                 )
                 <= distance
             ):
+                model= conn.execute(
+                    text("SELECT name FROM chair_models WHERE id = :id"), {"id": chair.model_id}
+                ).fetchone()
                 near_by_chairs.append(
                     AppGetNearbyChairsResponseChair(
                         id=encode_ulid(chair.id),
-                        name=chair.name,
-                        model=chair.model,
+                        name=encode_ulid(chair.name),
+                        model=model[0],
                         current_coordinate=Coordinate(
                             latitude=chair_location.latitude,
                             longitude=chair_location.longitude,
