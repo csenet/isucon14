@@ -185,8 +185,8 @@ class ChairGetNotificationResponse(BaseModel):
 async def notification_generator(chair: Chair):
     firstConnection: bool = True
     while True:
-        if not firstConnection:
-            await asyncio.sleep(MESSAGE_STREAM_DELAY)
+        # if not firstConnection:
+        await asyncio.sleep(MESSAGE_STREAM_DELAY)
         with engine.begin() as conn:
             row = conn.execute(
                 text(
@@ -210,8 +210,8 @@ async def notification_generator(chair: Chair):
 
             if row is None:
                 ride_status = get_latest_ride_status(conn, ride.id)
-                if not firstConnection:
-                    continue
+                # if not firstConnection:
+                #     continue
             else:
                 yet_sent_ride_status = RideStatus.model_validate(row)
                 assert yet_sent_ride_status is not None
@@ -232,7 +232,7 @@ async def notification_generator(chair: Chair):
                     {"id": yet_sent_ride_status.id},
                 )
             yield f"data: {ChairGetNotificationResponseData(ride_id=ride.id, user=SimpleUser(id=user.id, name=f'{user.firstname} {user.lastname}'), pickup_coordinate=Coordinate(latitude=ride.pickup_latitude, longitude=ride.pickup_longitude), destination_coordinate=Coordinate(latitude=ride.destination_latitude, longitude=ride.destination_longitude), status=ride_status)}\n"
-            firstConnection = False
+            # firstConnection = False
 
 @router.get("/notification", response_model_exclude_none=True)
 def chair_get_notification_stream(
