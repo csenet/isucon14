@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from ulid import ULID
+
 
 from .middlewares import app_auth_middleware
 from .models import (
@@ -32,8 +32,19 @@ from .utils import (
     timestamp_millis,
 )
 
+
 router = APIRouter(prefix="/api/app")
 
+from ulid import ULID
+def encode_ulid(id: bytes) -> str:
+    if isinstance(id, str):
+        return id
+    return str(ULID(id))
+
+def decode_ulid(id: str) -> bytes:
+    if isinstance(id, bytes):
+        return id
+    return ULID(id).bytes
 
 class AppPostUsersRequest(BaseModel):
     username: str
@@ -125,14 +136,14 @@ def app_post_users(
                     "INSERT INTO coupons (user_id, code, discount) VALUES (:user_id, CONCAT(:code_prefix, '_', FLOOR(UNIX_TIMESTAMP(NOW(3))*1000)), :discount)"
                 ),
                 {
-                    "user_id": inviter.id,
+                    "user_id": decode_ulid(inviter.id),
                     "code_prefix": "RWD_" + req.invitation_code,
                     "discount": 1000,
                 },
             )
 
     response.set_cookie(key="app_session", value=access_token, path="/")
-    return AppPostUsersResponse(id=user_id, invitation_code=invitation_code)
+    return AppPostUsersResponse(id=encode_ulid(user_id), invitation_code=invitation_code)
 
 
 class AppPostPaymentMethodsRequest(BaseModel):
@@ -154,7 +165,7 @@ def app_post_payment_methods(
             text(
                 "INSERT INTO payment_tokens (user_id, token) VALUES (:user_id, :token)"
             ),
-            {"user_id": user.id, "token": req.token},
+            {"user_id": decode_ulid(user.id), "token": req.token},
         )
 
 
@@ -194,8 +205,10 @@ def app_get_rides(
             text(
                 "SELECT * FROM rides WHERE user_id = :user_id ORDER BY created_at DESC"
             ),
-            {"user_id": user.id},
+            {"user_id": decode_ulid(user.id)},
         ).fetchall()
+
+        
         rides = [Ride.model_validate(row) for row in rows]
 
         items = []
@@ -215,21 +228,21 @@ def app_get_rides(
             )
 
             row = conn.execute(
-                text("SELECT * FROM chairs WHERE id = :id"), {"id": ride.chair_id}
+                text("SELECT * FROM chairs WHERE id = :id"), {"id": decode_ulid(ride.chair_id)}
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
             chair = Chair.model_validate(row)
 
             row = conn.execute(
-                text("SELECT * FROM owners WHERE id = :id"), {"id": chair.owner_id}
+                text("SELECT * FROM owners WHERE id = :id"), {"id": decode_ulid(chair.owner_id)}
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
             owner = Owner.model_validate(row)
 
             item = GetAppRidesResponseItem(
-                id=ride.id,
+                id=decode_ulid(ride.id),
                 pickup_coordinate=Coordinate(
                     latitude=ride.pickup_latitude, longitude=ride.pickup_longitude
                 ),
@@ -238,7 +251,7 @@ def app_get_rides(
                     longitude=ride.destination_longitude,
                 ),
                 chair=GetAppRidesResponseItemChair(
-                    id=chair.id, owner=owner.name, name=chair.name, model=chair.model
+                    id=decode_ulid(chair.id), owner=owner.name, name=chair.name, model=chair.model
                 ),
                 fare=fare,
                 evaluation=ride.evaluation,  # type: ignore[arg-type]
@@ -265,7 +278,7 @@ def get_latest_ride_status(conn: Connection, ride_id: str) -> str:
         text(
             "SELECT status FROM ride_statuses WHERE ride_id = :ride_id ORDER BY created_at DESC LIMIT 1"
         ),
-        {"ride_id": ride_id},
+        {"ride_id": decode_ulid(ride_id)},
     ).scalar()
 
     if status is None:
@@ -292,7 +305,7 @@ def app_post_rides(
     ride_id = ULID().bytes
     with engine.begin() as conn:
         rows = conn.execute(
-            text("SELECT * FROM rides WHERE user_id = :user_id"), {"user_id": user.id}
+            text("SELECT * FROM rides WHERE user_id = :user_id"), {"user_id": decode_ulid(user.id)}
         ).fetchall()
         rides = [Ride.model_validate(row) for row in rows]
 
@@ -312,8 +325,8 @@ def app_post_rides(
                 "INSERT INTO rides (id, user_id, pickup_latitude, pickup_longitude, destination_latitude, destination_longitude) VALUES (:id, :user_id, :pickup_latitude, :pickup_longitude, :destination_latitude, :destination_longitude)"
             ),
             {
-                "id": ride_id,
-                "user_id": user.id,
+                "id":decode_ulid( ride_id),
+                "user_id": decode_ulid(user.id),
                 "pickup_latitude": req.pickup_coordinate.latitude,
                 "pickup_longitude": req.pickup_coordinate.longitude,
                 "destination_latitude": req.destination_coordinate.latitude,
@@ -326,7 +339,7 @@ def app_post_rides(
                 "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
             ),
             #{"id": str(ULID()), "ride_id": ride_id, "status": "MATCHING"},
-            {"id": ULID().bytes, "ride_id": ride_id, "status": "MATCHING"},
+            {"id": ULID().bytes, "ride_id": decode_ulid(ride_id), "status": "MATCHING"},
         )
 
         ride_count = conn.execute(
@@ -340,7 +353,7 @@ def app_post_rides(
                 text(
                     "SELECT * FROM coupons WHERE user_id = :user_id AND code = 'CP_NEW2024' AND used_by IS NULL FOR UPDATE"
                 ),
-                {"user_id": user.id},
+                {"user_id": decode_ulid(user.id)},
             ).fetchone()
 
             if coupon:
@@ -348,7 +361,7 @@ def app_post_rides(
                     text(
                         "UPDATE coupons SET used_by = :ride_id WHERE user_id = :user_id AND code = 'CP_NEW2024'"
                     ),
-                    {"ride_id": ride_id, "user_id": user.id},
+                    {"ride_id": decode_ulid(ride_id), "user_id": decode_ulid(user.id)},
                 )
             else:
                 # 無ければ他のクーポンを付与された順番に使う
@@ -356,14 +369,14 @@ def app_post_rides(
                     text(
                         "SELECT * FROM coupons WHERE user_id = :user_id AND used_by IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE"
                     ),
-                    {"user_id": user.id},
+                    {"user_id": decode_ulid(user.id)},
                 ).fetchone()
                 if coupon:
                     conn.execute(
                         text(
                             "UPDATE coupons SET used_by = :ride_id WHERE user_id = :user_id AND code = :code"
                         ),
-                        {"ride_id": ride_id, "user_id": user.id, "code": coupon.code},
+                        {"ride_id": decode_ulid(ride_id), "user_id": decode_ulid(user.id), "code": coupon.code},
                     )
         else:
             # 他のクーポンを付与された順番に使う
@@ -396,7 +409,7 @@ def app_post_rides(
             req.destination_coordinate.longitude,
         )
 
-    return AppPostRidesResponse(ride_id=ride_id, fare=fare)
+    return AppPostRidesResponse(ride_id=encode_ulid(ride_id), fare=fare)
 
 
 class AppPostRidesEstimatedFareRequest(BaseModel):
@@ -471,7 +484,7 @@ def app_post_ride_evaluation(
 
     with engine.begin() as conn:
         row = conn.execute(
-            text("SELECT * FROM rides WHERE id = :ride_id"), {"ride_id": ride_id}
+            text("SELECT * FROM rides WHERE id = :ride_id"), {"ride_id": decode_ulid(ride_id)}
         ).fetchone()
 
         if row is None:
@@ -488,7 +501,7 @@ def app_post_ride_evaluation(
 
         result = conn.execute(
             text("UPDATE rides SET evaluation = :evaluation WHERE id = :id"),
-            {"evaluation": req.evaluation, "id": ride_id},
+            {"evaluation": req.evaluation, "id": decode_ulid(ride_id)},
         )
         if result.rowcount == 0:
             raise HTTPException(
@@ -500,11 +513,11 @@ def app_post_ride_evaluation(
                 "INSERT INTO ride_statuses (id, ride_id, status) VALUES (:id, :ride_id, :status)"
             ),
             #{"id": str(ULID()), "ride_id": ride_id, "status": "COMPLETED"},
-            {"id": ULID().bytes, "ride_id": ride_id, "status": "COMPLETED"},
+            {"id": ULID().bytes, "ride_id": decode_ulid(ride_id), "status": "COMPLETED"},
         )
 
         row = conn.execute(
-            text("SELECT * FROM rides WHERE id = :id"), {"id": ride_id}
+            text("SELECT * FROM rides WHERE id = :id"), {"id": decode_ulid(ride_id)}
         ).fetchone()
         if row is None:
             raise HTTPException(
@@ -514,7 +527,7 @@ def app_post_ride_evaluation(
 
         row = conn.execute(
             text("SELECT * FROM payment_tokens WHERE user_id = :user_id"),
-            {"user_id": ride.user_id},
+            {"user_id": decode_ulid(ride.user_id)},
         ).fetchone()
         if row is None:
             raise HTTPException(
@@ -545,7 +558,7 @@ def app_post_ride_evaluation(
                 text(
                     "SELECT * FROM rides WHERE user_id = :user_id ORDER BY created_at ASC",
                 ),
-                {"user_id": ride.user_id},
+                {"user_id": decode_ulid(ride.user_id)},
             ).fetchall()
             return [Ride.model_validate(r) for r in rows]
 
@@ -606,7 +619,7 @@ def app_get_notification(
             text(
                 "SELECT * FROM rides WHERE user_id = :user_id ORDER BY created_at DESC LIMIT 1"
             ),
-            {"user_id": user.id},
+            {"user_id": decode_ulid(user.id)},
         ).fetchone()
         if row is None:
             notification_response = AppGetNotificationResponse(retry_after_ms=30)
@@ -618,7 +631,7 @@ def app_get_notification(
             text(
                 "SELECT * FROM ride_statuses WHERE ride_id = :ride_id AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1"
             ),
-            {"ride_id": ride.id},
+            {"ride_id": decode_ulid(ride.id)},
         ).fetchone()
         yet_sent_ride_status: RideStatus | None = None
         if row is None:
@@ -639,7 +652,7 @@ def app_get_notification(
 
         notification_response = AppGetNotificationResponse(
             data=AppGetNotificationResponseData(
-                ride_id=ride.id,
+                ride_id=encode_ulid(ride.id),
                 pickup_coordinate=Coordinate(
                     latitude=ride.pickup_latitude, longitude=ride.pickup_longitude
                 ),
@@ -659,7 +672,7 @@ def app_get_notification(
         if ride.chair_id:
             row = conn.execute(
                 text("SELECT * FROM chairs WHERE id = :chair_id"),
-                {"chair_id": ride.chair_id},
+                {"chair_id": decode_ulid(ride.chair_id)},
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -669,7 +682,7 @@ def app_get_notification(
             stats = get_chair_stats(conn, ride.chair_id)
 
             notification_response.data.chair = AppGetNotificationResponseChair(  # type: ignore[union-attr]
-                id=chair.id, name=chair.name, model=chair.model, stats=stats
+                id=encode_ulid(chair.id), name=chair.name, model=chair.model, stats=stats
             )
 
         if yet_sent_ride_status:
@@ -677,7 +690,7 @@ def app_get_notification(
                 text(
                     "UPDATE ride_statuses SET app_sent_at = CURRENT_TIMESTAMP(6) WHERE id = :yet_send_ride_status_id"
                 ),
-                {"yet_send_ride_status_id": yet_sent_ride_status.id},
+                {"yet_send_ride_status_id": decode_ulid(yet_sent_ride_status.id)},
             )
 
     return notification_response
@@ -697,7 +710,7 @@ def get_chair_stats(
 ) -> AppGetNotificationResponseChairStats:
     rides = conn.execute(
         text("SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY updated_at DESC"),
-        {"chair_id": chair_id},
+        {"chair_id": decode_ulid(chair_id)},
     ).fetchall()
     total_ride_count = 0
     total_evaluation = 0.0
@@ -707,7 +720,7 @@ def get_chair_stats(
             text(
                 "SELECT * FROM ride_statuses WHERE ride_id = :ride_id ORDER BY created_at"
             ),
-            {"ride_id": ride.id},
+            {"ride_id": decode_ulid(ride.id)},
         )
         ride_statuses = [RideStatus.model_validate(row) for row in rows]
 
@@ -777,7 +790,7 @@ def app_get_nearby_chairs(
                 text(
                     "SELECT * FROM rides WHERE chair_id = :chair_id ORDER BY created_at DESC"
                 ),
-                {"chair_id": chair.id},
+                {"chair_id": decode_ulid(chair.id)},
             ).fetchall()
             rides = [Ride.model_validate(row) for row in rows]
 
@@ -798,7 +811,7 @@ def app_get_nearby_chairs(
                 text(
                     "SELECT * FROM chair_locations WHERE chair_id = :chair_id ORDER BY created_at DESC LIMIT 1"
                 ),
-                {"chair_id": chair.id},
+                {"chair_id": decode_ulid(chair.id)},
             ).fetchone()
             if row is None:
                 continue
@@ -816,7 +829,7 @@ def app_get_nearby_chairs(
             ):
                 near_by_chairs.append(
                     AppGetNearbyChairsResponseChair(
-                        id=chair.id,
+                        id=encode_ulid(chair.id),
                         name=chair.name,
                         model=chair.model,
                         current_coordinate=Coordinate(
@@ -853,7 +866,7 @@ def calculate_discounted_fare(
 
         # すでにクーポンが紐づいているならそれの割引額を参照
         coupon = conn.execute(
-            text("SELECT * FROM coupons WHERE used_by = :ride_id"), {"ride_id": ride.id}
+            text("SELECT * FROM coupons WHERE used_by = :ride_id"), {"ride_id": decode_ulid(ride.id)}
         ).fetchone()
         if coupon:
             discount = coupon.discount
@@ -863,7 +876,7 @@ def calculate_discounted_fare(
             text(
                 "SELECT * FROM coupons WHERE user_id = :user_id AND code = 'CP_NEW2024' AND used_by IS NULL"
             ),
-            {"user_id": user_id},
+            {"user_id": decode_ulid(user_id)},
         ).fetchone()
 
         if coupon is None:
@@ -872,7 +885,7 @@ def calculate_discounted_fare(
                 text(
                     "SELECT * FROM coupons WHERE user_id = :user_id AND used_by IS NULL ORDER BY created_at LIMIT 1"
                 ),
-                {"user_id": user_id},
+                {"user_id": decode_ulid(user_id)},
             ).fetchone()
 
         if coupon:

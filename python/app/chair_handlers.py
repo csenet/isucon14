@@ -9,8 +9,20 @@ from ulid import ULID
 from .app_handlers import get_latest_ride_status
 from .middlewares import chair_auth_middleware
 from .models import Chair, ChairLocation, Owner, Ride, RideStatus, User
+
 from .sql import engine
 from .utils import secure_random_str, timestamp_millis
+
+from ulid import ULID
+def encode_ulid(id: bytes) -> str:
+    if isinstance(id, str):
+        return id
+    return str(ULID(id))
+
+def decode_ulid(id: str) -> bytes:
+    if isinstance(id, bytes):
+        return id
+    return ULID(id).bytes
 
 router = APIRouter(prefix="/api/chair")
 
@@ -70,7 +82,7 @@ def chair_post_chairs(
         )
 
     resp.set_cookie(path="/", key="chair_session", value=access_token)
-    return ChairPostChairsResponse(id=chair_id, owner_id=owner.id)
+    return ChairPostChairsResponse(id=encode_ulid(chair_id), owner_id=encode_ulid(owner.id))
 
 
 class PostChairActivityRequest(BaseModel):
