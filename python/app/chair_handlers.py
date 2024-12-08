@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from ulid import ULID
+from sqlalchemy.exc import OperationalError
+import time
 
 from .app_handlers import get_latest_ride_status
 from .middlewares import chair_auth_middleware
