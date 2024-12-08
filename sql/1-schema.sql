@@ -53,6 +53,7 @@ CREATE TABLE chair_locations
 ALTER TABLE chair_locations ADD INDEX idx_chair_id (chair_id);
 ALTER TABLE chair_locations ADD INDEX idx_latitude (latitude);
 ALTER TABLE chair_locations ADD INDEX idx_longitude (longitude);
+ALTER TABLE chair_locations ADD INDEX idx_created_at (created_at);
 
 
 DROP TABLE IF EXISTS users;
