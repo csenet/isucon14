@@ -41,7 +41,7 @@ def internal_get_matching() -> None:
 
         if chair_row is None:
             return
-        matched = Chair.model_validate(row)
+        matched = Chair.model_validate(chair_row)
         
         empty = bool(
           conn.execute(
