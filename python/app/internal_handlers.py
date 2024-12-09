@@ -11,45 +11,48 @@ router = APIRouter(prefix="/api/internal")
 @router.get("/matching", status_code=HTTPStatus.NO_CONTENT)
 def internal_get_matching() -> None:
     with engine.begin() as conn:
-        # 未マッチのライドを1件取得
+        # 最も古い未マッチのライドを1件取得
         ride_row = conn.execute(
             text("SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1")
         ).fetchone()
 
         if ride_row is None:
-            # マッチ対象ライドがない場合は終了
+            # 対象のライドがなければ何もしない
             return
 
         ride = Ride.model_validate(ride_row)
         pickup_lat = ride.pickup_latitude
         pickup_lon = ride.pickup_longitude
 
-        # 候補の椅子を複数件取得（距離順に10件）
+        # 距離順に椅子を最大10件取得（マンハッタン距離近似）
         chair_rows = conn.execute(
-            text("""
+            text(
+                """
                 SELECT c.*
                 FROM chairs c
                 INNER JOIN chair_locations cl ON c.id = cl.chair_id
                 WHERE c.is_active = TRUE
                 ORDER BY (ABS(cl.latitude - :lat) + ABS(cl.longitude - :lon)) ASC
                 LIMIT 10
-            """),
+                """
+            ),
             {"lat": pickup_lat, "lon": pickup_lon}
         ).fetchall()
 
         if not chair_rows:
-            # 利用可能な椅子がなければ何もしない
+            # 椅子が全くなければ終了
             return
 
         matched = None
 
         # empty判定:
-        # すべてのライドがchair_sent_at 6回で完了しているかを確認
-        # 1つでも6回未満のライドがあればその椅子はemptyではない
+        # 椅子に紐づくライドで chair_sent_at が6回未満のものがあれば未完了ライドが残っているとみなし、empty = False
+        # 全てのライドが6回chair_sent_atを持つ（完了）か、もしくは紐づくライドがそもそも無ければ empty = True
         for chair_row in chair_rows:
             candidate = Chair.model_validate(chair_row)
             not_completed_count = conn.execute(
-                text("""
+                text(
+                    """
                     SELECT COUNT(*) FROM (
                         SELECT r.id, COUNT(rs.chair_sent_at) as sent_count
                         FROM rides r
@@ -58,23 +61,24 @@ def internal_get_matching() -> None:
                         GROUP BY r.id
                         HAVING COUNT(rs.chair_sent_at) < 6
                     ) t
-                """),
+                    """
+                ),
                 {"chair_id": candidate.id}
             ).scalar()
 
             empty = (not_completed_count == 0)
+
             if empty:
                 matched = candidate
                 break
 
-        # emptyな椅子がなかった場合はフォールバックとして最も近い椅子を割り当てる
+        # emptyな椅子が見つからなければ割り当てせず終了
         if matched is None:
-            matched = Chair.model_validate(chair_rows[0])
+            return
 
-        # ライドに椅子を割り当て
+        # emptyな椅子が見つかったのでライドに割り当て
         conn.execute(
             text("UPDATE rides SET chair_id = :chair_id WHERE id = :id"),
             {"chair_id": matched.id, "id": ride.id},
         )
-
     return
