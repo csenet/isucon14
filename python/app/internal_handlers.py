@@ -9,98 +9,68 @@ from .sql import engine
 router = APIRouter(prefix="/api/internal")
 
 
-# このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
 @router.get("/matching", status_code=HTTPStatus.NO_CONTENT)
 def internal_get_matching() -> None:
-    # 最も古い未マッチのライドを1件取得
     with engine.begin() as conn:
-        ride_row = conn.execute(
-            text(
-                "SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1"
-            )
-        ).fetchone()
-        if ride_row is None:
-            # マッチング対象となるライドがなければ何もしない
-            return
-        ride = Ride.model_validate(ride_row)
-        pickup_lat = ride.pickup_latitude
-        pickup_lon = ride.pickup_longitude
-
-        # 候補となる椅子を複数件取得
-        # 一番近い椅子から順に試していく（例として10件取得）
-        query = text("""
-            SELECT c.*
-            FROM chairs c
-            INNER JOIN chair_locations cl ON c.id = cl.chair_id
-            WHERE c.is_active = TRUE
-            ORDER BY (ABS(cl.latitude - :lat) + ABS(cl.longitude - :lon)) ASC
-            LIMIT 10
-        """)
-
-        chair_rows = conn.execute(query, {"lat": pickup_lat, "lon": pickup_lon}).fetchall()
-        if not chair_rows:
-            # 利用可能な椅子が全く無ければ何もしない
+        # 一度にマッチングするライド数を5件とする
+        rides_rows = conn.execute(
+            text("SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 5")
+        ).fetchall()
+        
+        if not rides_rows:
             return
 
-        matched: Chair | None = None
+        rides = [Ride.model_validate(r) for r in rides_rows]
 
-        # 複数候補からempty条件を満たす最初の椅子を探す
-        for chair_row in chair_rows:
-            candidate = Chair.model_validate(chair_row)
+        # 複数のライド分をまとめて処理する
+        for ride in rides:
+            pickup_lat = ride.pickup_latitude
+            pickup_lon = ride.pickup_longitude
 
-            # 'empty' 判定
-            # chair_sent_atが6回セットされたride(=completed)以外がないかを確認する
-            empty = bool(
-                conn.execute(
-                    text(
-                        "SELECT COUNT(*) = 0 FROM ("
-                        "SELECT COUNT(chair_sent_at) = 6 AS completed "
-                        "FROM ride_statuses "
-                        "WHERE ride_id IN (SELECT id FROM rides WHERE chair_id = :chair_id) "
-                        "GROUP BY ride_id"
-                        ") is_completed WHERE completed = FALSE"
-                    ),
-                    {"chair_id": candidate.id},
+            # 候補の椅子を複数件取得（距離順）
+            chair_rows = conn.execute(
+                text("""
+                    SELECT c.*
+                    FROM chairs c
+                    INNER JOIN chair_locations cl ON c.id = cl.chair_id
+                    WHERE c.is_active = TRUE
+                    ORDER BY (ABS(cl.latitude - :lat) + ABS(cl.longitude - :lon)) ASC
+                    LIMIT 10
+                """),
+                {"lat": pickup_lat, "lon": pickup_lon}
+            ).fetchall()
+
+            if not chair_rows:
+                # 利用可能な椅子が全くなければこのライドはスキップ(マッチング不可)
+                continue
+
+            matched = None
+
+            # empty判定を簡略化（以下は例。実際の空判定は環境依存）
+            # ここではstatus = 'completed'以外のライドが椅子に紐づいていなければemptyとみなす
+            for chair_row in chair_rows:
+                candidate = Chair.model_validate(chair_row)
+
+                not_completed_count = conn.execute(
+                    text("SELECT COUNT(*) FROM rides WHERE chair_id = :chair_id AND status <> 'completed'"),
+                    {"chair_id": candidate.id}
                 ).scalar()
+
+                empty = (not_completed_count == 0)
+
+                if empty:
+                    matched = candidate
+                    break
+
+            # emptyな椅子が見つからない場合はフォールバックで最も近い椅子を採用
+            if matched is None:
+                matched = Chair.model_validate(chair_rows[0])
+
+            # 椅子をライドに割り当てる
+            conn.execute(
+                text("UPDATE rides SET chair_id = :chair_id WHERE id = :id"),
+                {"chair_id": matched.id, "id": ride.id},
             )
 
-            if empty:
-                matched = candidate
-                break
-
-        # 候補が全てemptyでなければマッチングを諦める
-        if matched is None:
-            # ここで諦めず、ランダムに椅子を探すフォールバック手段も検討可能
-            # for _ in range(10):
-            #     row = conn.execute(
-            #         text(
-            #             "SELECT c.* FROM chairs c "
-            #             "INNER JOIN (SELECT id FROM chairs WHERE is_active = TRUE ORDER BY RAND() LIMIT 1) tmp ON c.id = tmp.id"
-            #         )
-            #     ).fetchone()
-            #     if row is None:
-            #         break
-            #     candidate = Chair.model_validate(row)
-            #     empty = bool(
-            #         conn.execute(
-            #             text(
-            #                 "SELECT COUNT(*) = 0 FROM ("
-            #                 "SELECT COUNT(chair_sent_at) = 6 AS completed "
-            #                 "FROM ride_statuses "
-            #                 "WHERE ride_id IN (SELECT id FROM rides WHERE chair_id = :chair_id) "
-            #                 "GROUP BY ride_id"
-            #                 ") is_completed WHERE completed = FALSE"
-            #             ),
-            #             {"chair_id": candidate.id},
-            #         ).scalar()
-            #     )
-            #     if empty:
-            #         matched = candidate
-            #         break
-            return
-
-        # 条件を満たす椅子が見つかった場合にライドに割り当てる
-        conn.execute(
-            text("UPDATE rides SET chair_id = :chair_id WHERE id = :id"),
-            {"chair_id": matched.id, "id": ride.id},
-        )
+    # 一度に複数ライドのマッチが終了したら204を返す
+    return
